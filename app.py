@@ -43,7 +43,7 @@ app.add_middleware(GZipMiddleware, minimum_size=500)
 
 # ---------------- Config ----------------
 APP_ROOT = Path(__file__).resolve().parent
-DATA_DIR = Path.home() / "Documents" / "ManuscriptOCR"
+DATA_DIR = Path.home() / "Library" / "Application Support" / "ManuscriptOCR"
 MODELS_DIR = APP_ROOT / "models"  # bundled models; user can also add to DATA_DIR/models
 USER_MODELS_DIR = DATA_DIR / "models"
 DEFAULT_MODEL = str(MODELS_DIR / "BiblIA_01_ft_best.mlmodel")
@@ -799,10 +799,10 @@ INDEX_HTML = _jenv.from_string("""
 
     <label>Model</label>
     <select name="model_path">
-      {% for m in models %}<option value="{{ m }}" {% if m==selected %}selected{% endif %}>{{ m|replace(userhome,'~') }}</option>{% endfor %}
-      {% if not models %}<option value="{{ selected }}" selected>{{ selected|replace(userhome,'~') }}</option>{% endif %}
+      {% for m in models %}<option value="{{ m }}" {% if m==selected %}selected{% endif %}>{{ m.split('/')[-1].replace('.mlmodel','') }}</option>{% endfor %}
+      {% if not models %}<option value="{{ selected }}" selected>{{ selected.split('/')[-1].replace('.mlmodel','') }}</option>{% endif %}
     </select>
-    <div class="hint">Models are read from the app bundle and ~/Documents/ManuscriptOCR/models</div>
+    <div class="hint">Models are read from the app bundle and ~/Library/Application Support/ManuscriptOCR/models</div>
 
 
     <label>Line Padding</label>
@@ -843,6 +843,7 @@ INDEX_HTML = _jenv.from_string("""
   <div style="margin-top:1rem;"><a href="/models">View Models &amp; Training</a></div>
   <div style="margin-top:.5rem;"><a href="/search">Search Text</a></div>
   <div style="margin-top:.5rem;"><a href="/help">How to Use</a></div>
+  <div style="margin-top:.5rem;"><a href="/open_data_folder">Open Data Folder</a></div>
 
   {% if sessions %}
   <div style="margin-top:1rem;"><a href="/sessions">View {{ sessions|length }} Existing Session{{ 's' if sessions|length != 1 }}</a></div>
@@ -1040,7 +1041,7 @@ VIEW_HTML = _jenv.from_string("""
           </button>
         </form>
 
-        <form action="/export_gt" method="get">
+        <form action="/export_gt" method="get" onsubmit="return confirm('Export GT will download a zip file containing all line crop images and their ground truth text files.\\n\\nThis is for sharing or use with external tools — it does not affect your local training data.\\n\\nContinue?');">
           <input type="hidden" name="session" value="{{ session }}">
           <button type="submit">Export GT</button>
         </form>
@@ -1066,6 +1067,10 @@ VIEW_HTML = _jenv.from_string("""
         <a href="/">New OCR</a>
         <a href="/models">Models</a>
 <span class="small">Session: {{ session }}{% if model_name %} | Model: {{ model_name }}{% endif %}</span>
+<label class="small" style="display:flex;align-items:center;gap:.3rem;margin-left:.5rem;">Editor:
+  <input type="text" id="editor-id-input" value="{{ editor_id }}" placeholder="name or ID"
+         style="width:8rem;padding:2px 5px;font-size:.82rem;background:var(--sunken);color:var(--fg);border:1px solid var(--border);border-radius:3px;">
+</label>
 
 <div class="controls-group">
   <label><input type="checkbox" id="toggle-original" checked> Original</label>
@@ -1691,33 +1696,65 @@ VIEW_HTML = _jenv.from_string("""
 
   updateGutter(); // initial render
 
-  // --- Per-line notes inputs ---
+  // --- Per-line notes + metadata inputs ---
   const notesWrap = document.getElementById('notes-lines-wrap');
   if (notesWrap) {
     const savedNotes = ({{ p.notes | tojson }}).split("\\n");
+    const lineMetas = {{ line_metas | tojson }};
+    const viewSession = '{{ session }}';
+    const viewPageStem = '{{ current_page.page_stem }}';
+
+    function makeField(val, placeholder, width, cls) {
+      const inp = document.createElement('input');
+      inp.type = 'text';
+      inp.className = cls;
+      inp.value = val || '';
+      inp.placeholder = placeholder;
+      inp.style.cssText = 'padding:.2rem .3rem;font-size:.78rem;background:var(--sunken);color:var(--fg);border:1px solid var(--border);border-radius:3px;width:' + width + ';';
+      return inp;
+    }
 
     function buildNoteInputs() {
       const textLines = textarea.value.split("\\n");
       const count = textLines.length;
-      const existing = Array.from(notesWrap.querySelectorAll('.note-line-input')).map(el => el.value);
+      // Preserve existing values
+      const existingNotes = Array.from(notesWrap.querySelectorAll('.note-line-input')).map(el => el.value);
+      const existingLang = Array.from(notesWrap.querySelectorAll('.line-lang')).map(el => el.value);
+      const existingBook = Array.from(notesWrap.querySelectorAll('.line-book')).map(el => el.value);
+      const existingCh = Array.from(notesWrap.querySelectorAll('.line-ch')).map(el => el.value);
+      const existingVs = Array.from(notesWrap.querySelectorAll('.line-vs')).map(el => el.value);
       notesWrap.innerHTML = '';
       for (let i = 0; i < count; i++) {
+        const lineNum = i + 1;
+        const meta = lineMetas[lineNum] || {};
         const row = document.createElement('div');
-        row.style.cssText = 'display:flex;gap:.4rem;align-items:center;padding:2px 0;border-bottom:1px solid var(--border-soft);';
+        row.style.cssText = 'display:flex;gap:.3rem;align-items:center;padding:2px 0;border-bottom:1px solid var(--border-soft);flex-wrap:wrap;';
+        row.dataset.lineIdx = lineNum;
         const num = document.createElement('span');
-        num.style.cssText = 'width:2rem;text-align:right;font-size:.8rem;color:var(--muted);flex-shrink:0;font-family:var(--font-mono);';
-        num.textContent = i + 1;
-        const inp = document.createElement('input');
-        inp.type = 'text';
-        inp.className = 'note-line-input';
-        inp.style.cssText = 'flex:1;padding:.25rem .4rem;font-size:.85rem;background:var(--sunken);color:var(--fg);border:1px solid var(--border);border-radius:3px;direction:ltr;';
-        inp.placeholder = textLines[i] ? textLines[i].substring(0, 30) + '…' : '';
-        inp.value = (i < existing.length && existing[i] !== undefined) ? existing[i] : (savedNotes[i] || '');
-        inp.addEventListener('focus', function() {
-          if (typeof highlightPoly === 'function') highlightPoly(i + 1);
+        num.style.cssText = 'width:1.8rem;text-align:right;font-size:.78rem;color:var(--muted);flex-shrink:0;font-family:var(--font-mono);';
+        num.textContent = lineNum;
+        const noteInp = makeField(
+          i < existingNotes.length ? existingNotes[i] : (savedNotes[i] || ''),
+          textLines[i] ? textLines[i].substring(0, 25) + '…' : 'note',
+          '40%', 'note-line-input');
+        noteInp.style.direction = 'ltr';
+        noteInp.style.flex = '1';
+        noteInp.style.minWidth = '80px';
+        const langInp = makeField(i < existingLang.length ? existingLang[i] : (meta.lang_id || ''), 'lang', '3rem', 'line-lang');
+        const bookInp = makeField(i < existingBook.length ? existingBook[i] : (meta.book || ''), 'book', '4rem', 'line-book');
+        const chInp = makeField(i < existingCh.length ? existingCh[i] : (meta.chapter || ''), 'ch', '2.5rem', 'line-ch');
+        const vsInp = makeField(i < existingVs.length ? existingVs[i] : (meta.verse || ''), 'vs', '2.5rem', 'line-vs');
+        [noteInp, langInp, bookInp, chInp, vsInp].forEach(function(inp) {
+          inp.addEventListener('focus', function() {
+            if (typeof highlightPoly === 'function') highlightPoly(lineNum);
+          });
         });
         row.appendChild(num);
-        row.appendChild(inp);
+        row.appendChild(noteInp);
+        row.appendChild(langInp);
+        row.appendChild(bookInp);
+        row.appendChild(chInp);
+        row.appendChild(vsInp);
         notesWrap.appendChild(row);
       }
     }
@@ -1728,6 +1765,50 @@ VIEW_HTML = _jenv.from_string("""
     window._getNotesText = function() {
       return Array.from(notesWrap.querySelectorAll('.note-line-input')).map(el => el.value).join("\\n");
     };
+
+    // Auto-save per-line metadata (debounced)
+    var lineFieldTimer = null;
+    notesWrap.addEventListener('input', function(e) {
+      if (e.target.classList.contains('line-lang') || e.target.classList.contains('line-book') ||
+          e.target.classList.contains('line-ch') || e.target.classList.contains('line-vs')) {
+        clearTimeout(lineFieldTimer);
+        lineFieldTimer = setTimeout(function() {
+          // Save all lines that have metadata
+          notesWrap.querySelectorAll('[data-line-idx]').forEach(function(row) {
+            var idx = parseInt(row.dataset.lineIdx, 10);
+            var lang = row.querySelector('.line-lang');
+            var book = row.querySelector('.line-book');
+            var ch = row.querySelector('.line-ch');
+            var vs = row.querySelector('.line-vs');
+            if (!lang || (!lang.value && !book.value && !ch.value && !vs.value)) return;
+            var fd = new FormData();
+            fd.set('session', viewSession);
+            fd.set('page_stem', viewPageStem);
+            fd.set('line_idx', idx);
+            fd.set('lang_id', lang.value);
+            fd.set('book', book.value);
+            fd.set('chapter', ch.value);
+            fd.set('verse', vs.value);
+            fetch('/api/save_line_fields', { method: 'POST', body: fd });
+          });
+        }, 1200);
+      }
+    });
+
+    // Auto-save editor_id
+    var editorInput = document.getElementById('editor-id-input');
+    if (editorInput) {
+      var editorTimer = null;
+      editorInput.addEventListener('input', function() {
+        clearTimeout(editorTimer);
+        editorTimer = setTimeout(function() {
+          var fd = new FormData();
+          fd.set('session', viewSession);
+          fd.set('editor_id', editorInput.value);
+          fetch('/api/save_editor_id', { method: 'POST', body: fd });
+        }, 800);
+      });
+    }
   }
 })();
 </script>
@@ -2089,7 +2170,7 @@ TRAIN_HTML = _jenv.from_string("""
 
         <form action="/export_final_gt" method="post" id="export-form">
           <input type="hidden" name="session" value="{{ session }}">
-          <button type="submit" {% if not current_script %}disabled title="Set a script above first"{% endif %}>
+          <button type="submit">
             Export to Validation Set
           </button>
         </form>
@@ -2222,13 +2303,23 @@ TRAIN_HTML = _jenv.from_string("""
     if (exportForm) {
       exportForm.addEventListener('submit', async (e) => {
           e.preventDefault();
+          var scriptInput = document.getElementById('script-input');
+          var scriptVal = scriptInput ? scriptInput.value.trim() : '';
+          if (!scriptVal) {
+              alert('Please set a script tag first (e.g. Hebrew_semi-cursive) before exporting.' + "\\n\\n" + 'The script tag determines which training folder your data goes into.');
+              if (scriptInput) scriptInput.focus();
+              return;
+          }
+          if (!confirm('Export to Validation Set will copy all line crop images and ground truth text into your local training folder, organized by script tag.' + "\\n\\n" + 'Script: ' + scriptVal + "\\n\\n" + 'This stages data for model fine-tuning \u2014 it does not create a download.' + "\\n\\n" + 'Continue?')) return;
           exportStatus.textContent = 'Exporting...';
           try {
               const response = await fetch('/export_final_gt', { method: 'POST', body: new FormData(exportForm) });
               const text = await response.text();
-              exportStatus.textContent = response.ok ? `✅ ${text}` : `❌ Error: ${text}`;
+              exportStatus.textContent = response.ok ? text : 'Error: ' + text;
+              if (response.ok) alert(text);
           } catch (err) {
-              exportStatus.textContent = `❌ Network Error.`;
+              exportStatus.textContent = 'Network Error.';
+              alert('Export failed: network error.');
           }
       });
     }
@@ -3540,6 +3631,19 @@ def view(session: str, page: int = 1):
 
     script_file = sess / "script.txt"
     current_script = script_file.read_text("utf-8").strip() if script_file.exists() else ""
+    editor_id = (sess / "editor_id.txt").read_text("utf-8").strip() if (sess / "editor_id.txt").exists() else ""
+
+    # Load per-line metadata for current page
+    line_metas = {}
+    gt_prev = sess / "gt_preview"
+    if gt_prev.exists():
+        for lm_file in gt_prev.glob(f"{page_stem}_*.meta.json"):
+            try:
+                idx_str = lm_file.stem.split("_")[-1]
+                with open(lm_file, "r", encoding="utf-8") as lmf:
+                    line_metas[int(idx_str)] = json.load(lmf)
+            except Exception:
+                pass
 
     all_page_stems = [pf.stem for pf in page_files]
 
@@ -3554,6 +3658,8 @@ def view(session: str, page: int = 1):
         model_name=model_name,
         scripts=list_script_dirs(),
         current_script=current_script,
+        editor_id=editor_id,
+        line_metas=line_metas,
         all_page_stems=all_page_stems,
     )
 
@@ -3845,8 +3951,8 @@ def export_viewer_csv(session: str):
     headers = [
         "title", "page", "line",
         "editor_id", "obj_id", "part", "side", "col", "folio", "book", "chapter", "verse",
-        "translation", "unicode", "transliteration", "notes", "no_vowels",
-        "text_order_id", "lang_id", "timestamp", "update", "line_1", "script_id"
+        "translation", "unicode", "notes", "no_vowels",
+        "text_order_id", "lang_id", "timestamp", "update", "script_id"
     ]
 
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -3858,17 +3964,10 @@ def export_viewer_csv(session: str):
     if len(title) > 9 and title[-9] == "_":
         title = title[:-9]
 
-    # Read obj_id from file (blank if not set)
-    obj_id_path = sess / "obj_id.txt"
-    obj_id_val = ""
-    if obj_id_path.exists():
-        obj_id_val = obj_id_path.read_text("utf-8").strip()
-
-    # Read script tag (script_id column; later this will be resolved to an integer)
-    script_path = sess / "script.txt"
-    script_val = ""
-    if script_path.exists():
-        script_val = script_path.read_text("utf-8").strip()
+    # Read session-level metadata files
+    obj_id_val = (sess / "obj_id.txt").read_text("utf-8").strip() if (sess / "obj_id.txt").exists() else ""
+    editor_id_val = (sess / "editor_id.txt").read_text("utf-8").strip() if (sess / "editor_id.txt").exists() else ""
+    script_val = (sess / "script.txt").read_text("utf-8").strip() if (sess / "script.txt").exists() else ""
 
     text_order_counter = 0
 
@@ -3913,30 +4012,28 @@ def export_viewer_csv(session: str):
                     "title": title,
                     "page": page_num,
                     "line": idx,
-                    "editor_id": "",
+                    "editor_id": editor_id_val,
                     "obj_id": obj_id_val,
                     "part": page_meta.get("part", ""),
                     "side": page_meta.get("side", ""),
                     "col": line_meta.get("col", ""),
                     "folio": page_meta.get("folio", ""),
-                    "book": "",
+                    "book": line_meta.get("book", ""),
                     "chapter": line_meta.get("chapter", ""),
                     "verse": line_meta.get("verse", ""),
                     "translation": line_meta.get("translation", ""),
                     "unicode": text_line,
-                    "transliteration": line_meta.get("transliteration", ""),
                     "notes": line_meta.get("notes", "") or page_meta.get("notes", ""),
                     "no_vowels": "",
                     "text_order_id": text_order_counter,
-                    "lang_id": "",
+                    "lang_id": line_meta.get("lang_id", ""),
                     "timestamp": now,
                     "update": now,
-                    "line_1": "",
                     "script_id": script_val,
                 }
                 writer.writerow(row)
 
-    return PlainTextResponse(f"CSV saved to: {csv_path}")
+    return FileResponse(str(csv_path), filename=csv_path.name, media_type="text/csv")
 
 # --- POST /api/save_page_meta — Save per-page metadata (folio, side, part) ---
 @app.post("/api/save_page_meta")
@@ -4141,6 +4238,52 @@ def update_segmentation(update: PolygonUpdate):
         import traceback
         traceback.print_exc()
         return PlainTextResponse(f"An error occurred: {e}", status_code=500)
+
+# --- GET /open_data_folder — Reveal data dir in Finder ---
+@app.get("/open_data_folder")
+def open_data_folder():
+    import subprocess as _sp
+    _sp.Popen(["open", str(DATA_DIR)])
+    return RedirectResponse(url="/", status_code=303)
+
+# --- POST /api/save_editor_id — Save editor ID for session ---
+@app.post("/api/save_editor_id")
+def save_editor_id(session: str = Form(...), editor_id: str = Form("")):
+    sess = SESSIONS_BASE_DIR / session
+    if not sess.exists():
+        return JSONResponse({"error": "session not found"}, status_code=404)
+    (sess / "editor_id.txt").write_text(editor_id.strip(), encoding="utf-8")
+    return JSONResponse({"ok": True})
+
+# --- POST /api/save_line_fields — Save per-line metadata from viewer ---
+@app.post("/api/save_line_fields")
+def save_line_fields(
+    session: str = Form(...),
+    page_stem: str = Form(...),
+    line_idx: int = Form(...),
+    lang_id: str = Form(""),
+    book: str = Form(""),
+    chapter: str = Form(""),
+    verse: str = Form(""),
+):
+    sess = SESSIONS_BASE_DIR / session
+    gt_prev = sess / "gt_preview"
+    meta_path = gt_prev / f"{page_stem}_{line_idx:04d}.meta.json"
+    meta = {}
+    if meta_path.exists():
+        try:
+            with open(meta_path, "r", encoding="utf-8") as f:
+                meta = json.load(f)
+        except Exception:
+            pass
+    meta["lang_id"] = lang_id.strip()
+    meta["book"] = book.strip()
+    meta["chapter"] = chapter.strip()
+    meta["verse"] = verse.strip()
+    gt_prev.mkdir(parents=True, exist_ok=True)
+    with open(meta_path, "w", encoding="utf-8") as f:
+        json.dump(meta, f, indent=2)
+    return JSONResponse({"ok": True})
 
 # ---- Mount page routers (at end to avoid circular import) ----
 from models_page import router as models_router

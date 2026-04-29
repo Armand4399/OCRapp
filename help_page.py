@@ -140,8 +140,9 @@ HELP_HTML = _jenv.from_string(r"""
     <h3>Exports</h3>
     <ul>
       <li><strong>Download merged text</strong> — all pages concatenated into one .txt file</li>
-      <li><strong>Export CSV</strong> — structured export with folio, page, line metadata</li>
-      <li><strong>Export GT</strong> — zip of line crops + ground truth text for external tools</li>
+      <li><strong>Export CSV</strong> — structured export with folio, page, line, editor, book, chapter, verse, and all other metadata columns</li>
+      <li><strong>Export GT</strong> (viewer) — downloads a <strong>zip file</strong> containing all line crop images and their <code>.gt.txt</code> text files. Use this to share ground truth data with collaborators or for external training tools.</li>
+      <li><strong>Export to Validation Set</strong> (training page) — <strong>copies</strong> line crops and GT text into your local training data folder, organized by script tag. This is what feeds the in-app model fine-tuning. It does not create a download — it stages data locally for <code>ketos train</code>.</li>
     </ul>
   </div>
 
