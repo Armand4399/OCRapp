@@ -32,12 +32,10 @@ from app import (
 
 router = APIRouter()
 
-TRAIN_DIR = DATA_DIR / "training" / "train"
-TRAIN_DIR.mkdir(parents=True, exist_ok=True)
 GT_BASE = DATA_DIR / "training"
 
 import shutil as _shutil
-KETOS_BIN = _shutil.which("ketos") or str(Path.home() / "kraken-env" / "bin" / "ketos")
+KETOS_BIN = str(Path.home() / "kraken-env" / "bin" / "ketos")
 
 _SCRIPTS_FILE = MODELS_DIR / "model_scripts.json"
 _NAME_RE = re.compile(r"^[A-Za-z0-9_-]+$")
@@ -95,14 +93,13 @@ def _load_model_info(path: Path, scripts_map: dict) -> dict:
 
 
 def _count_gt_lines(script: str) -> dict:
-    counts = {"train": 0, "val": 0}
-    for label, base_dir in [("train", TRAIN_DIR), ("val", FINAL_GT_DIR)]:
-        script_dir = base_dir / script
-        if script_dir.is_dir():
-            counts[label] = len(list(script_dir.glob("*.png")))
-        elif not script and base_dir.is_dir():
-            counts[label] = len(list(base_dir.glob("*.png")))
-    return counts
+    count = 0
+    script_dir = FINAL_GT_DIR / script
+    if script_dir.is_dir():
+        count = len(list(script_dir.glob("*.png")))
+    elif not script and FINAL_GT_DIR.is_dir():
+        count = len(list(FINAL_GT_DIR.glob("*.png")))
+    return {"lines": count}
 
 
 def _sparkline_points(history: list, width: int = 140, height: int = 32) -> str:
@@ -250,6 +247,7 @@ def train(
     lrate: float = Form(0.001),
     batch_size: int = Form(1),
     lag: int = Form(10),
+    data_selection: str = Form("all"),
 ):
     scripts_map = _load_model_scripts()
     script = scripts_map.get(model_name, "")
@@ -258,16 +256,35 @@ def train(
     model_path = MODELS_DIR / f"{model_name}.mlmodel"
     if not model_path.exists():
         return PlainTextResponse("Model file not found.", status_code=404)
-    train_dir = TRAIN_DIR / script
-    val_dir = FINAL_GT_DIR / script
-    if not train_dir.is_dir():
-        train_dir = TRAIN_DIR
-    if not val_dir.is_dir():
-        val_dir = FINAL_GT_DIR
-    train_files = sorted(train_dir.glob("*.png"))
-    val_files = sorted(val_dir.glob("*.png"))
+    gt_dir = FINAL_GT_DIR / script
+    if not gt_dir.is_dir():
+        gt_dir = FINAL_GT_DIR
+    all_files = sorted(gt_dir.glob("*.png"))
+
+    # Filter based on data_selection
+    if data_selection == "new":
+        ts_file = gt_dir / "last_trained.txt"
+        if ts_file.exists():
+            try:
+                last_ts = float(ts_file.read_text().strip())
+            except Exception:
+                last_ts = 0
+        else:
+            last_ts = 0
+        train_files = [f for f in all_files if f.stat().st_mtime > last_ts]
+    elif data_selection.startswith("last_"):
+        try:
+            n_lines = int(data_selection.split("_")[1])
+        except Exception:
+            n_lines = 500
+        train_files = sorted(all_files, key=lambda f: f.stat().st_mtime, reverse=True)[:n_lines]
+    else:
+        train_files = all_files
+
     if not train_files:
-        return PlainTextResponse(f"No training data found for script '{script}'.", status_code=400)
+        if data_selection == "new":
+            return PlainTextResponse(f"No new ground truth data since last training. Export more data or use 'All data'.", status_code=400)
+        return PlainTextResponse(f"No ground truth data found for script '{script}'.", status_code=400)
     output_stem = f"{model_name}_ft"
     n = 1
     while (MODELS_DIR / f"{output_stem}.mlmodel").exists():
@@ -279,30 +296,23 @@ def train(
     PROGRESS[job_id] = {"total": 0, "done_pages": 0, "state": "preparing", "errors": []}
     threading.Thread(
         target=_train_job,
-        args=(str(model_path), output_stem, train_files, val_files, epochs, lrate, batch_size, lag),
+        args=(str(model_path), output_stem, train_files, epochs, lrate, batch_size, lag, gt_dir),
         daemon=True,
     ).start()
     return JSONResponse({"ok": True, "job": job_id})
 
 
-def _train_job(model_path, output_stem, train_files, val_files, epochs, lrate, batch_size, lag):
+def _train_job(model_path, output_stem, train_files, epochs, lrate, batch_size, lag, gt_dir=None):
     output_path = str(MODELS_DIR / output_stem)
     job_id = output_stem
     log_path = MODELS_DIR / f"{output_stem}_train.log"
-    val_list_file = None
     try:
-        if val_files:
-            val_list_file = tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False, prefix="kraken_val_")
-            for vf in val_files:
-                val_list_file.write(str(vf) + "\n")
-            val_list_file.close()
         cmd = [
-            str(KETOS_BIN), "train", "-d", DEVICE,
+            str(KETOS_BIN), "train",
             "-i", model_path, "-f", "path", "-o", output_path,
             "-N", str(epochs), "-r", str(lrate), "-B", str(batch_size), "--lag", str(lag),
+            "--resize", "add",
         ]
-        if val_list_file:
-            cmd += ["-e", val_list_file.name]
         cmd += [str(f) for f in train_files]
         PROGRESS[job_id]["state"] = "training"
         log_lines = []
@@ -315,14 +325,19 @@ def _train_job(model_path, output_stem, train_files, val_files, epochs, lrate, b
         proc.wait()
         log_path.write_text("\n".join(log_lines), "utf-8")
         if proc.returncode == 0:
+            # Clean up per-epoch checkpoints, keep only _best
+            import glob as _glob
+            for ckpt in _glob.glob(str(MODELS_DIR / f"{output_stem}_[0-9]*.mlmodel")):
+                Path(ckpt).unlink(missing_ok=True)
             PROGRESS[job_id]["state"] = "done"
+            # Save timestamp so "new since last train" knows the cutoff
+            if gt_dir:
+                import time
+                (Path(gt_dir) / "last_trained.txt").write_text(str(time.time()), "utf-8")
         else:
             PROGRESS[job_id]["state"] = f"error: ketos exited with code {proc.returncode}"
     except Exception as e:
         PROGRESS[job_id]["state"] = f"error: {e}"
-    finally:
-        if val_list_file:
-            Path(val_list_file.name).unlink(missing_ok=True)
 
 
 @router.get("/gt_samples/{script}")
@@ -330,7 +345,7 @@ def gt_samples(script: str, limit: int = Query(6)):
     if not _NAME_RE.match(script):
         return JSONResponse([])
     samples = []
-    for base_dir in [TRAIN_DIR, FINAL_GT_DIR]:
+    for base_dir in [FINAL_GT_DIR]:
         d = base_dir / script
         if not d.is_dir():
             d = base_dir
@@ -374,7 +389,7 @@ def gt_browse(script: str):
         return JSONResponse({"lines": []})
     from PIL import Image
     lines = []
-    for label, base_dir in [("train", TRAIN_DIR), ("val", FINAL_GT_DIR)]:
+    for label, base_dir in [("gt", FINAL_GT_DIR)]:
         d = base_dir / script
         if not d.is_dir():
             d = base_dir
@@ -427,7 +442,7 @@ def quick_test(model_name: str = Form(...), num_lines: int = Form(5)):
     if not model_path.exists():
         return JSONResponse({"error": "Model not found."}, status_code=404)
     gt_files = []
-    for base_dir in [FINAL_GT_DIR, TRAIN_DIR]:
+    for base_dir in [FINAL_GT_DIR]:
         d = base_dir / script
         if not d.is_dir():
             d = base_dir
@@ -700,15 +715,13 @@ MODEL_DETAIL_HTML = _jenv.from_string(r"""
       </select>
       <span class="script-status" id="script-status"></span>
     </div>
-    {% if m.script %}
-    <div class="gt-info" id="gt-summary">GT: {{ gt_counts.train }} train / {{ gt_counts.val }} val lines</div>
+    <div id="gt-section" {% if not m.script %}style="display:none;"{% endif %}>
+    <div class="gt-info" id="gt-summary">GT: {{ gt_counts.lines }} lines</div>
 
     <div class="gt-toolbar">
       <label><input type="checkbox" id="filter-flagged" onchange="filterGt()"> Flagged only</label>
-      <select id="filter-source" onchange="filterGt()">
-        <option value="all">All sources</option>
-        <option value="train">Train only</option>
-        <option value="val">Val only</option>
+      <select id="filter-source" onchange="filterGt()" style="display:none;">
+        <option value="all">All</option>
       </select>
       <input type="text" id="filter-text" placeholder="Search text…" oninput="filterGt()" style="width:10rem;">
       <button type="button" onclick="selectAllFlagged()">Select flagged</button>
@@ -718,9 +731,10 @@ MODEL_DETAIL_HTML = _jenv.from_string(r"""
     <div class="gt-grid" id="gt-grid">
       <div style="color:var(--muted);padding:1rem;">Loading training data…</div>
     </div>
-    {% else %}
+    </div>
+    <div id="gt-no-script" {% if m.script %}style="display:none;"{% endif %}>
     <div class="gt-info">Assign a script to see training data.</div>
-    {% endif %}
+    </div>
   </div>
 
   <!-- Training (recognition only) -->
@@ -737,6 +751,12 @@ MODEL_DETAIL_HTML = _jenv.from_string(r"""
       </div>
     </details>
     <div class="controls-row" style="margin-top:.5rem;">
+      <select id="data-selection" style="padding:.35rem .5rem;font-size:.85rem;background:var(--sunken);color:var(--fg);border:1px solid var(--border);border-radius:4px;">
+        <option value="all">All data ({{ gt_counts.lines }} lines)</option>
+        <option value="new">New since last train</option>
+        <option value="last_500">Last 500 lines</option>
+        <option value="last_1000">Last 1000 lines</option>
+      </select>
       <button type="button" onclick="startTraining('{{ m.name }}')" id="train-btn"
               {% if not m.script %}disabled title="Assign a script first"{% endif %}>
         Train
@@ -816,7 +836,16 @@ function setScript(modelName, script) {
       var testb = document.getElementById('test-btn');
       if (tb) { tb.disabled = !script; }
       if (testb) { testb.disabled = !script; }
-      if (script) loadGtSamples(script);
+      var gtSection = document.getElementById('gt-section');
+      var gtNoScript = document.getElementById('gt-no-script');
+      if (script) {
+        if (gtSection) gtSection.style.display = '';
+        if (gtNoScript) gtNoScript.style.display = 'none';
+        loadGtBrowser(script);
+      } else {
+        if (gtSection) gtSection.style.display = 'none';
+        if (gtNoScript) gtNoScript.style.display = '';
+      }
     });
 }
 
@@ -875,6 +904,8 @@ function startTraining(modelName) {
   overlay.style.display = 'flex';
   msg.textContent = 'Starting training…'; detail.textContent = '';
   var body = new URLSearchParams(); body.set('model_name', modelName);
+  var dataSel = document.getElementById('data-selection');
+  if (dataSel) body.set('data_selection', dataSel.value);
   document.querySelectorAll('#train-opts input').forEach(function(inp){ body.set(inp.name, inp.value); });
   fetch('/train', {method:'POST', body:body})
     .then(function(r){ if(!r.ok) return r.text().then(function(t){throw new Error(t);}); return r.json(); })
@@ -963,10 +994,13 @@ function loadGtBrowser(script) {
       gtData = d.lines;
       var summary = document.getElementById('gt-summary');
       if (summary) {
-        var train = gtData.filter(function(l){return l.source==='train';}).length;
-        var val = gtData.filter(function(l){return l.source==='val';}).length;
         var flagged = gtData.filter(function(l){return l.flagged;}).length;
-        summary.textContent = 'GT: ' + train + ' train / ' + val + ' val lines' + (flagged ? ' (' + flagged + ' flagged)' : '');
+        summary.textContent = 'GT: ' + gtData.length + ' lines' + (flagged ? ' (' + flagged + ' flagged)' : '');
+      }
+      // Update training data dropdown count
+      var dataSel = document.getElementById('data-selection');
+      if (dataSel && dataSel.options.length > 0) {
+        dataSel.options[0].textContent = 'All data (' + gtData.length + ' lines)';
       }
       filterGt();
     });
@@ -1032,7 +1066,7 @@ function deleteSelected() {
         var train = gtData.filter(function(l){return l.source==='train';}).length;
         var val = gtData.filter(function(l){return l.source==='val';}).length;
         var flagged = gtData.filter(function(l){return l.flagged;}).length;
-        summary.textContent = 'GT: ' + train + ' train / ' + val + ' val lines' + (flagged ? ' (' + flagged + ' flagged)' : '');
+        summary.textContent = 'GT: ' + gtData.length + ' lines' + (flagged ? ' (' + flagged + ' flagged)' : '');
       }
     });
 }

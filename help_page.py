@@ -157,6 +157,24 @@ HELP_HTML = _jenv.from_string(r"""
       <li>Use <code>Ctrl+C</code> in terminal to stop the server</li>
     </ul>
   </div>
+
+  <div class="section-title">Uninstall</div>
+
+  <div class="step">
+    <h3>Remove Manuscript OCR</h3>
+    <p>This will stop the server and optionally delete all your session data, training data, and user models.
+       You will be prompted to drag the app to Trash in Finder.</p>
+    <form action="/uninstall" method="post" style="margin-top:.75rem;">
+      <label style="display:flex;align-items:center;gap:.5rem;margin-bottom:.75rem;cursor:pointer;">
+        <input type="checkbox" name="delete_data" value="yes">
+        Also delete all session data, training data, and user models
+      </label>
+      <button type="submit" style="background:transparent;color:#b44;border:1px solid #b44;padding:.5rem 1rem;border-radius:4px;cursor:pointer;"
+              onclick="return confirm('Are you sure you want to uninstall Manuscript OCR?')">
+        Uninstall
+      </button>
+    </form>
+  </div>
 </div>
 </body>
 </html>

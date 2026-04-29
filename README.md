@@ -89,11 +89,22 @@ User data is stored in `~/Library/Application Support/ManuscriptOCR/`:
 ```
 ManuscriptOCR/
 ├── sessions/      # OCR session data (images, text, segmentation)
-├── training/      # Ground truth for model training
-│   ├── train/     # Training data by script
-│   └── val/       # Validation data by script
+├── training/
+│   └── val/       # Ground truth data by script
 └── models/        # User-added .mlmodel files
 ```
+
+## Uninstall
+
+**From the app (easiest):**
+1. Open the app and go to **How to Use** (link on home page)
+2. Scroll to the bottom — click **Uninstall**
+3. Optionally check "delete all data" to remove sessions and training data
+4. Drag the app to Trash in the Finder window that opens
+
+**Manually:**
+1. Drag **Manuscript OCR** from Applications to Trash
+2. Optionally delete your data: `rm -rf ~/Library/Application\ Support/ManuscriptOCR`
 
 ## Architecture
 

@@ -3928,16 +3928,30 @@ def export_final_gt(session: str = Form(...)):
     target_dir.mkdir(parents=True, exist_ok=True)
 
     count_files = 0
-    for p in gt_prev.glob("*"):
-        unique_name = f"{session}_{p.name}"
+    skipped = 0
+    for p in gt_prev.glob("*.png"):
+        gt_txt = p.with_suffix(".gt.txt")
+        # Skip lines with empty or whitespace-only GT text
+        if gt_txt.exists():
+            text = gt_txt.read_text("utf-8", errors="replace").strip()
+            if not text:
+                skipped += 1
+                continue
+        else:
+            skipped += 1
+            continue
+        unique_prefix = f"{session}_"
         try:
-            shutil.copy(p, target_dir / unique_name)
+            shutil.copy(p, target_dir / f"{unique_prefix}{p.name}")
+            shutil.copy(gt_txt, target_dir / f"{unique_prefix}{gt_txt.name}")
             count_files += 1
         except Exception as e:
             print(f"Could not copy {p.name} to {target_dir}: {e}")
 
-    # each line corresponds to 2 files: .png and .gt.txt
-    return PlainTextResponse(f"Exported {count_files // 2} lines to {script}/ (PNG + GT).")
+    msg = f"Exported {count_files} lines to {script}/."
+    if skipped:
+        msg += f" Skipped {skipped} empty lines."
+    return PlainTextResponse(msg)
 
 # --- GET /export_viewer_csv — Export viewer text to CSV in ~/Downloads ---
 @app.get("/export_viewer_csv")
@@ -4245,6 +4259,35 @@ def open_data_folder():
     import subprocess as _sp
     _sp.Popen(["open", str(DATA_DIR)])
     return RedirectResponse(url="/", status_code=303)
+
+# --- POST /uninstall — Remove data and reveal app in Finder for deletion ---
+@app.post("/uninstall")
+def uninstall(delete_data: str = Form("no")):
+    import subprocess as _sp
+    msg = "Manuscript OCR has been uninstalled."
+    if delete_data == "yes":
+        shutil.rmtree(str(DATA_DIR), ignore_errors=True)
+        msg += " All session data, training data, and user models have been removed."
+    else:
+        msg += f" Your data has been kept at {DATA_DIR}."
+    # Reveal the app in Finder so user can drag to trash
+    app_path = Path("/Applications/Manuscript OCR.app")
+    if app_path.exists():
+        _sp.Popen(["open", "-R", str(app_path)])
+        msg += " Drag the app to Trash in the Finder window that opened."
+    # Shut down the server after a short delay
+    import threading
+    def _shutdown():
+        import time; time.sleep(2)
+        os._exit(0)
+    threading.Thread(target=_shutdown, daemon=True).start()
+    return HTMLResponse(f"""
+    <html><head><title>Uninstalled</title>
+    <style>body{{font-family:system-ui;background:#282828;color:#e8e0d0;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;}}
+    .box{{text-align:center;max-width:500px;padding:2rem;}}
+    h2{{color:#9a7820;}}p{{line-height:1.6;}}</style></head>
+    <body><div class="box"><h2>Uninstalled</h2><p>{msg}</p><p style="color:#888;font-size:.85rem;">You can close this tab.</p></div></body></html>
+    """)
 
 # --- POST /api/save_editor_id — Save editor ID for session ---
 @app.post("/api/save_editor_id")
