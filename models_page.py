@@ -18,8 +18,9 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Form, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, Response
 
-from app_copy_2 import (
+from app import (
     APP_ROOT,
+    DATA_DIR,
     MODELS_DIR,
     FINAL_GT_DIR,
     PROGRESS,
@@ -31,9 +32,12 @@ from app_copy_2 import (
 
 router = APIRouter()
 
-TRAIN_DIR = APP_ROOT / "training" / "train"
-KETOS_BIN = Path.home() / "kraken-env" / "bin" / "ketos"
-GT_BASE = APP_ROOT / "training"
+TRAIN_DIR = DATA_DIR / "training" / "train"
+TRAIN_DIR.mkdir(parents=True, exist_ok=True)
+GT_BASE = DATA_DIR / "training"
+
+import shutil as _shutil
+KETOS_BIN = _shutil.which("ketos") or str(Path.home() / "kraken-env" / "bin" / "ketos")
 
 _SCRIPTS_FILE = MODELS_DIR / "model_scripts.json"
 _NAME_RE = re.compile(r"^[A-Za-z0-9_-]+$")
@@ -434,7 +438,7 @@ def quick_test(model_name: str = Form(...), num_lines: int = Form(5)):
     if not gt_files:
         return JSONResponse({"error": f"No GT data with text found for '{script}'."}, status_code=400)
     sample = random.sample(gt_files, min(num_lines, len(gt_files)))
-    kraken_bin = str(Path.home() / "kraken-env" / "bin" / "kraken")
+    kraken_bin = _shutil.which("kraken") or str(Path.home() / "kraken-env" / "bin" / "kraken")
     results = []
     total_chars = 0
     total_errors = 0

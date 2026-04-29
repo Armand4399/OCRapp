@@ -5,11 +5,14 @@ __pycache__/
 # macOS
 .DS_Store
 
-# Data (user-specific, not distributed)
-models/
-sessions/
-training/
-exports/
+# Models (bundled separately, not in git due to size)
+models/*.mlmodel
 
 # Virtual environment
 kraken-env/
+
+# Build artifacts
+build/
+dist/
+*.spec
+*.dmg

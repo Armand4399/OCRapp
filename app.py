@@ -36,14 +36,16 @@ from pydantic import BaseModel
 from datetime import datetime
 import csv
 
-app = FastAPI(title="Kraken OCR")
+app = FastAPI(title="Manuscript OCR")
 
 from fastapi.middleware.gzip import GZipMiddleware
 app.add_middleware(GZipMiddleware, minimum_size=500)
 
 # ---------------- Config ----------------
 APP_ROOT = Path(__file__).resolve().parent
-MODELS_DIR = APP_ROOT / "models"
+DATA_DIR = Path.home() / "Documents" / "ManuscriptOCR"
+MODELS_DIR = APP_ROOT / "models"  # bundled models; user can also add to DATA_DIR/models
+USER_MODELS_DIR = DATA_DIR / "models"
 DEFAULT_MODEL = str(MODELS_DIR / "BiblIA_01_ft_best.mlmodel")
 DEFAULT_DPI = 300
 PROGRESS: Dict[str, Dict[str, Any]] = {}
@@ -53,13 +55,15 @@ import torch as _torch
 DEVICE = "mps" if _torch.backends.mps.is_available() else "cpu"
 
 # --- Permanent Data Locations ---
-SESSIONS_BASE_DIR = APP_ROOT / "sessions"
-FINAL_GT_DIR = APP_ROOT / "training" / "val"
+SESSIONS_BASE_DIR = DATA_DIR / "sessions"
+FINAL_GT_DIR = DATA_DIR / "training" / "val"
 DOWNLOADS_DIR = Path.home() / "Downloads"  # CSV export target
 
 # Ensure base directories exist on startup
+DATA_DIR.mkdir(parents=True, exist_ok=True)
 SESSIONS_BASE_DIR.mkdir(parents=True, exist_ok=True)
 FINAL_GT_DIR.mkdir(parents=True, exist_ok=True)
+USER_MODELS_DIR.mkdir(parents=True, exist_ok=True)
 DOWNLOADS_DIR.mkdir(parents=True, exist_ok=True)
 
 # ---------------- Kraken Python API ----------------
@@ -178,9 +182,11 @@ def kraken_binarize(img_path: Path, out_path: Path):
 
 # ---------------- Helpers ----------------
 def list_models() -> List[str]:
-    if MODELS_DIR.exists():
-        return sorted(str(p) for p in MODELS_DIR.glob("*.mlmodel"))
-    return []
+    found = set()
+    for d in (MODELS_DIR, USER_MODELS_DIR):
+        if d.exists():
+            found.update(str(p) for p in d.glob("*.mlmodel"))
+    return sorted(found)
 
 def list_script_dirs() -> List[str]:
     scripts: set[str] = set()
@@ -765,7 +771,7 @@ _jenv.globals.update(BASE_CSS=BASE_CSS, THEME_INIT=THEME_INIT, THEME_TOGGLE=THEM
 INDEX_HTML = _jenv.from_string("""
 <!doctype html>
 <html>
-<head><meta charset="utf-8"><title>Kraken OCR</title>
+<head><meta charset="utf-8"><title>Manuscript OCR</title>
 {{ THEME_INIT | safe }}
 <style>
   {{ BASE_CSS | safe }}
@@ -779,7 +785,7 @@ INDEX_HTML = _jenv.from_string("""
 <body>
 <header class="app-header">{{ THEME_TOGGLE | safe }}</header>
 <div class="page-centered">
-  <h1>Kraken OCR</h1>
+  <h1>Manuscript OCR</h1>
   <form action="/start_ocr" method="post" enctype="multipart/form-data">
     <label>Project Name (optional)</label>
     <input type="text" name="project_name" placeholder="e.g. test-1">
@@ -796,7 +802,7 @@ INDEX_HTML = _jenv.from_string("""
       {% for m in models %}<option value="{{ m }}" {% if m==selected %}selected{% endif %}>{{ m|replace(userhome,'~') }}</option>{% endfor %}
       {% if not models %}<option value="{{ selected }}" selected>{{ selected|replace(userhome,'~') }}</option>{% endif %}
     </select>
-    <div class="hint">Models are read from {{ userhome }}/kraken-models</div>
+    <div class="hint">Models are read from the app bundle and ~/Documents/ManuscriptOCR/models</div>
 
 
     <label>Line Padding</label>

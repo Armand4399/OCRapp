@@ -8,7 +8,7 @@ from pathlib import Path
 from fastapi import APIRouter
 from fastapi.responses import HTMLResponse
 
-from app_copy_2 import (
+from app import (
     SESSIONS_BASE_DIR,
     _jenv,
     page_number,

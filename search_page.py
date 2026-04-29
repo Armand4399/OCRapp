@@ -10,7 +10,7 @@ from typing import Optional, List
 from fastapi import APIRouter, Query
 from fastapi.responses import HTMLResponse
 
-from app_copy_2 import (
+from app import (
     SESSIONS_BASE_DIR,
     _jenv,
     page_number,

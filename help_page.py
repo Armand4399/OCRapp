@@ -6,7 +6,7 @@ Mounted as a FastAPI router in the main app.
 from fastapi import APIRouter
 from fastapi.responses import HTMLResponse
 
-from app_copy_2 import _jenv
+from app import _jenv
 
 router = APIRouter()
 
