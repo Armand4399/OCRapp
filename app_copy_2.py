@@ -36,7 +36,7 @@ from pydantic import BaseModel
 from datetime import datetime
 import csv
 
-app = FastAPI(title="Hebrew OCR Viewer + Training (Kraken 6)")
+app = FastAPI(title="Kraken OCR")
 
 from fastapi.middleware.gzip import GZipMiddleware
 app.add_middleware(GZipMiddleware, minimum_size=500)
@@ -765,7 +765,7 @@ _jenv.globals.update(BASE_CSS=BASE_CSS, THEME_INIT=THEME_INIT, THEME_TOGGLE=THEM
 INDEX_HTML = _jenv.from_string("""
 <!doctype html>
 <html>
-<head><meta charset="utf-8"><title>Hebrew OCR</title>
+<head><meta charset="utf-8"><title>Kraken OCR</title>
 {{ THEME_INIT | safe }}
 <style>
   {{ BASE_CSS | safe }}
@@ -779,7 +779,7 @@ INDEX_HTML = _jenv.from_string("""
 <body>
 <header class="app-header">{{ THEME_TOGGLE | safe }}</header>
 <div class="page-centered">
-  <h1>Hebrew OCR (Kraken 6)</h1>
+  <h1>Kraken OCR</h1>
   <form action="/start_ocr" method="post" enctype="multipart/form-data">
     <label>Project Name (optional)</label>
     <input type="text" name="project_name" placeholder="e.g. test-1">
@@ -835,6 +835,8 @@ INDEX_HTML = _jenv.from_string("""
   </form>
 
   <div style="margin-top:1rem;"><a href="/models">View Models &amp; Training</a></div>
+  <div style="margin-top:.5rem;"><a href="/search">Search Text</a></div>
+  <div style="margin-top:.5rem;"><a href="/help">How to Use</a></div>
 
   {% if sessions %}
   <div style="margin-top:1rem;"><a href="/sessions">View {{ sessions|length }} Existing Session{{ 's' if sessions|length != 1 }}</a></div>
@@ -1047,7 +1049,7 @@ VIEW_HTML = _jenv.from_string("""
 
         <div style="position:relative;display:inline-block;">
           <button type="button" onclick="this.nextElementSibling.classList.toggle('open')">Reprocess &#9662;</button>
-          <div class="dropdown-menu" style="display:none;position:absolute;top:100%;left:0;margin-top:4px;background:var(--panel);border:1px solid var(--border);border-radius:6px;box-shadow:var(--shadow-strong);z-index:100;min-width:180px;">
+          <div class="dropdown-menu" style="position:absolute;top:100%;left:0;margin-top:4px;background:var(--panel);border:1px solid var(--border);border-radius:6px;box-shadow:var(--shadow-strong);z-index:100;min-width:180px;">
             <button type="button" onclick="this.parentElement.classList.remove('open');reprocess({{ page }})" style="display:block;width:100%;text-align:left;padding:.5rem .75rem;border:none;background:none;color:var(--fg);cursor:pointer;font-size:.85rem;">Reprocess this page</button>
             <button type="button" onclick="this.parentElement.classList.remove('open');reprocess(null)" style="display:block;width:100%;text-align:left;padding:.5rem .75rem;border:none;background:none;color:var(--fg);cursor:pointer;font-size:.85rem;border-top:1px solid var(--border);">Reprocess all pages</button>
             <button type="button" onclick="this.parentElement.classList.remove('open');reocr({{ page }})" style="display:block;width:100%;text-align:left;padding:.5rem .75rem;border:none;background:none;color:var(--fg);cursor:pointer;font-size:.85rem;border-top:1px solid var(--border);">Re-OCR this page (keep polygons)</button>
@@ -1107,7 +1109,9 @@ VIEW_HTML = _jenv.from_string("""
     <label style="display:flex; flex-direction:column; gap:.25rem; font-size:.85rem; color:var(--muted);">Folio <input type="text" name="folio" class="page-meta-input" value="{{ p.folio }}" placeholder="e.g. 1" style="padding:.3rem .5rem; background:var(--panel); color:var(--fg); border:1px solid var(--border); border-radius:6px; width:80px;"></label>
     <label style="display:flex; flex-direction:column; gap:.25rem; font-size:.85rem; color:var(--muted);">Side <input type="text" name="side" class="page-meta-input" value="{{ p.side }}" placeholder="e.g. recto" style="padding:.3rem .5rem; background:var(--panel); color:var(--fg); border:1px solid var(--border); border-radius:6px; width:80px;"></label>
     <label style="display:flex; flex-direction:column; gap:.25rem; font-size:.85rem; color:var(--muted);">Part <input type="text" name="part" class="page-meta-input" value="{{ p.part }}" placeholder="e.g. 1" style="padding:.3rem .5rem; background:var(--panel); color:var(--fg); border:1px solid var(--border); border-radius:6px; width:60px;"></label>
+    <button type="button" id="cascade-btn" style="align-self:flex-end; font-size:.8rem; padding:.3rem .6rem;" title="Auto-fill folio/side for all pages from this point (e.g. 1r, 1v, 2r, 2v…)">Cascade &#x25BC;</button>
     <span class="page-meta-status small" style="align-self:flex-end;"></span>
+    <span id="cascade-status" class="small" style="align-self:flex-end;"></span>
   </div>
   <!-- Top: images side by side -->
   <div class="panels-top">
@@ -1183,10 +1187,8 @@ VIEW_HTML = _jenv.from_string("""
     </div>
 
     <div class="image-card col-notes" style="display:none;">
-      <div class="coltitle"><span>Notes</span></div>
-      <div class="line-editor-wrap">
-        <div class="line-gutter" id="notes-gutter"></div>
-        <textarea class="notes-textarea" id="notes-textarea" style="width:100%; height:100%; padding:.6rem; line-height:1.5; border:1px solid var(--border); border-radius:0 10px 10px 0; background:var(--panel); color:var(--fg); font-family:monospace; font-size:14px; resize:none; white-space:pre-wrap;">{{ p.notes }}</textarea>
+      <div class="coltitle"><span>Notes (per line)</span></div>
+      <div id="notes-lines-wrap" style="max-height:70vh; overflow-y:auto; border:1px solid var(--border); border-radius:4px; padding:.4rem;">
       </div>
       <span class="notes-status small" style="margin-top:.25rem; display:block;"></span>
     </div>
@@ -1223,12 +1225,35 @@ VIEW_HTML = _jenv.from_string("""
     const panelsBottom = qs('.panels-bottom');
 
     if (vl === 'reading') {
-      // CSS handles the grid via display:contents + grid-template-areas.
-      // Clear any inline styles that would fight it.
       if (panelsTop)    { panelsTop.style.display = ''; panelsTop.style.gridTemplateColumns = ''; }
       if (panelsBottom) { panelsBottom.style.display = ''; panelsBottom.style.gridTemplateColumns = ''; }
+      // Rebuild grid-template-areas based on which panels are visible
+      var showOrig = cbOrig.checked, showBin = cbBin.checked;
+      var showText = cbText.checked, showNotes = cbNotes.checked;
+      var hasLeft = showOrig || showBin, hasRight = showText;
+      var pg = qs('.page');
+      if (pg) {
+        var cols = (hasLeft && hasRight) ? '1fr 1fr' : '1fr';
+        var areas = ['"title title"', '"meta meta"'];
+        if (hasLeft && hasRight) {
+          if (showOrig) areas.push('"orig text"');
+          if (showBin)  areas.push('"bin text"');
+          if (!showOrig && !showBin) areas.push('"text text"');
+        } else if (hasLeft && !hasRight) {
+          if (showOrig) areas.push('"orig orig"');
+          if (showBin)  areas.push('"bin bin"');
+        } else if (!hasLeft && hasRight) {
+          areas.push('"text text"');
+        }
+        if (showNotes) areas.push('"notes notes"');
+        pg.style.gridTemplateColumns = cols;
+        pg.style.gridTemplateAreas = areas.join(' ');
+      }
     } else {
-      // Split: manage container grid columns based on visible panels.
+      // Split: clear any Reading-mode inline grid on .page
+      var pg = qs('.page');
+      if (pg) { pg.style.gridTemplateColumns = ''; pg.style.gridTemplateAreas = ''; }
+      // Manage container grid columns based on visible panels.
       const showOrig = cbOrig.checked, showBin = cbBin.checked;
       if (panelsTop) {
         panelsTop.style.display = (showOrig || showBin) ? '' : 'none';
@@ -1660,25 +1685,43 @@ VIEW_HTML = _jenv.from_string("""
 
   updateGutter(); // initial render
 
-  // --- Notes gutter: mirror line numbers from main textarea ---
-  const notesTA = document.getElementById('notes-textarea');
-  const notesGutter = document.getElementById('notes-gutter');
-  if (notesTA && notesGutter) {
-    function updateNotesGutter() {
-      // Use the main textarea's line count for the gutter
-      const mainLines = textarea.value.split('\\n');
-      const notesLines = notesTA.value.split('\\n');
-      const lineCount = Math.max(mainLines.length, notesLines.length);
-      if (notesGutter.children.length !== lineCount) {
-        notesGutter.innerHTML = Array.from({length: lineCount}, (_, i) => `<div>${i + 1}</div>`).join('');
+  // --- Per-line notes inputs ---
+  const notesWrap = document.getElementById('notes-lines-wrap');
+  if (notesWrap) {
+    const savedNotes = ({{ p.notes | tojson }}).split("\\n");
+
+    function buildNoteInputs() {
+      const textLines = textarea.value.split("\\n");
+      const count = textLines.length;
+      const existing = Array.from(notesWrap.querySelectorAll('.note-line-input')).map(el => el.value);
+      notesWrap.innerHTML = '';
+      for (let i = 0; i < count; i++) {
+        const row = document.createElement('div');
+        row.style.cssText = 'display:flex;gap:.4rem;align-items:center;padding:2px 0;border-bottom:1px solid var(--border-soft);';
+        const num = document.createElement('span');
+        num.style.cssText = 'width:2rem;text-align:right;font-size:.8rem;color:var(--muted);flex-shrink:0;font-family:var(--font-mono);';
+        num.textContent = i + 1;
+        const inp = document.createElement('input');
+        inp.type = 'text';
+        inp.className = 'note-line-input';
+        inp.style.cssText = 'flex:1;padding:.25rem .4rem;font-size:.85rem;background:var(--sunken);color:var(--fg);border:1px solid var(--border);border-radius:3px;direction:ltr;';
+        inp.placeholder = textLines[i] ? textLines[i].substring(0, 30) + '…' : '';
+        inp.value = (i < existing.length && existing[i] !== undefined) ? existing[i] : (savedNotes[i] || '');
+        inp.addEventListener('focus', function() {
+          if (typeof highlightPoly === 'function') highlightPoly(i + 1);
+        });
+        row.appendChild(num);
+        row.appendChild(inp);
+        notesWrap.appendChild(row);
       }
-      notesGutter.scrollTop = notesTA.scrollTop;
     }
-    notesTA.addEventListener('input', updateNotesGutter);
-    notesTA.addEventListener('scroll', () => { notesGutter.scrollTop = notesTA.scrollTop; });
-    // Also update when main textarea changes (line count may change)
-    textarea.addEventListener('input', updateNotesGutter);
-    updateNotesGutter();
+
+    buildNoteInputs();
+    textarea.addEventListener('input', buildNoteInputs);
+
+    window._getNotesText = function() {
+      return Array.from(notesWrap.querySelectorAll('.note-line-input')).map(el => el.value).join("\\n");
+    };
   }
 })();
 </script>
@@ -1726,7 +1769,6 @@ VIEW_HTML = _jenv.from_string("""
     const statusEl = metaBar.querySelector('.page-meta-status');
     let debounce = null;
 
-    const notesTa = document.getElementById('notes-textarea');
     const notesStatus = document.querySelector('.notes-status');
 
     function savePageMeta() {
@@ -1734,7 +1776,7 @@ VIEW_HTML = _jenv.from_string("""
         fd.set('session', '{{ session }}');
         fd.set('page_stem', '{{ current_page.page_stem }}');
         inputs.forEach(inp => fd.set(inp.name, inp.value));
-        if (notesTa) fd.set('notes', notesTa.value);
+        if (window._getNotesText) fd.set('notes', window._getNotesText());
         fetch('/api/save_page_meta', { method: 'POST', body: fd })
             .then(r => {
                 if (r.ok) {
@@ -1751,10 +1793,61 @@ VIEW_HTML = _jenv.from_string("""
             debounce = setTimeout(savePageMeta, 800);
         });
     });
-    if (notesTa) {
-        notesTa.addEventListener('input', () => {
+    var notesWrapMeta = document.getElementById('notes-lines-wrap');
+    if (notesWrapMeta) {
+        notesWrapMeta.addEventListener('input', () => {
             if (debounce) clearTimeout(debounce);
             debounce = setTimeout(savePageMeta, 800);
+        });
+    }
+
+    // --- Cascade folio/side to all subsequent pages ---
+    var cascadeBtn = document.getElementById('cascade-btn');
+    var cascadeStatus = document.getElementById('cascade-status');
+    if (cascadeBtn) {
+        cascadeBtn.addEventListener('click', function() {
+            var folioInput = metaBar.querySelector('input[name=folio]');
+            var sideInput = metaBar.querySelector('input[name=side]');
+            var partInput = metaBar.querySelector('input[name=part]');
+            var startFolio = parseInt(folioInput.value, 10);
+            var startSide = (sideInput.value || 'r').trim().toLowerCase();
+            var part = (partInput.value || '').trim();
+            if (isNaN(startFolio)) { alert('Enter a folio number first (e.g. 1)'); return; }
+            if (startSide !== 'r' && startSide !== 'v' && startSide !== 'recto' && startSide !== 'verso') {
+                alert('Side must be r or v (recto/verso)'); return;
+            }
+            if (startSide === 'recto') startSide = 'r';
+            if (startSide === 'verso') startSide = 'v';
+            var currentPage = {{ page }};
+            var totalPages = {{ total_pages }};
+            var allStems = {{ all_page_stems | tojson }};
+            if (!confirm('Auto-fill folio/side from page ' + currentPage + ' to ' + totalPages + '?' + "\\n\\n" + 'Starting: ' + startFolio + startSide + "\\n" + 'Pattern: ' + startFolio + 'r, ' + startFolio + 'v, ' + (startFolio+1) + 'r, ' + (startFolio+1) + 'v…')) return;
+            cascadeBtn.disabled = true;
+            cascadeStatus.textContent = 'Cascading…';
+            var folio = startFolio;
+            var side = startSide;
+            var promises = [];
+            for (var pg = currentPage; pg <= totalPages; pg++) {
+                var stem = allStems[pg - 1];
+                if (!stem) continue;
+                var fd = new FormData();
+                fd.set('session', '{{ session }}');
+                fd.set('page_stem', stem);
+                fd.set('folio', String(folio));
+                fd.set('side', side);
+                fd.set('part', part);
+                promises.push(fetch('/api/save_page_meta', { method: 'POST', body: fd }));
+                if (side === 'r') { side = 'v'; }
+                else { side = 'r'; folio++; }
+            }
+            Promise.all(promises).then(function() {
+                cascadeStatus.textContent = 'Done — ' + (totalPages - currentPage + 1) + ' pages updated';
+                cascadeBtn.disabled = false;
+                setTimeout(function(){ cascadeStatus.textContent = ''; }, 3000);
+            }).catch(function(e) {
+                cascadeStatus.textContent = 'Error: ' + e;
+                cascadeBtn.disabled = false;
+            });
         });
     }
 })();
@@ -3442,6 +3535,8 @@ def view(session: str, page: int = 1):
     script_file = sess / "script.txt"
     current_script = script_file.read_text("utf-8").strip() if script_file.exists() else ""
 
+    all_page_stems = [pf.stem for pf in page_files]
+
     return VIEW_HTML.render(
         session=session,
         page=page,
@@ -3453,6 +3548,7 @@ def view(session: str, page: int = 1):
         model_name=model_name,
         scripts=list_script_dirs(),
         current_script=current_script,
+        all_page_stems=all_page_stems,
     )
 
 # --- GET /download — Download all pages merged into a single text file ---
@@ -4043,5 +4139,9 @@ def update_segmentation(update: PolygonUpdate):
 # ---- Mount page routers (at end to avoid circular import) ----
 from models_page import router as models_router
 from sessions_page import router as sessions_router
+from search_page import router as search_router
+from help_page import router as help_router
 app.include_router(models_router)
 app.include_router(sessions_router)
+app.include_router(search_router)
+app.include_router(help_router)

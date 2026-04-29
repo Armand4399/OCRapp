@@ -434,10 +434,7 @@ def quick_test(model_name: str = Form(...), num_lines: int = Form(5)):
     if not gt_files:
         return JSONResponse({"error": f"No GT data with text found for '{script}'."}, status_code=400)
     sample = random.sample(gt_files, min(num_lines, len(gt_files)))
-    from app_copy_2 import _get_rec_model, _kr_rpred
-    from kraken.containers import Segmentation, BaselineLine
-    from PIL import Image
-    rec_model = _get_rec_model(str(model_path))
+    kraken_bin = str(Path.home() / "kraken-env" / "bin" / "kraken")
     results = []
     total_chars = 0
     total_errors = 0
@@ -445,28 +442,17 @@ def quick_test(model_name: str = Form(...), num_lines: int = Form(5)):
         ground_truth = gt_path.read_text("utf-8", errors="replace").strip()
         prediction = ""
         try:
-            im = Image.open(png_path)
-            w, h = im.size
-            # Build a single-line segmentation covering the full image
-            seg = Segmentation(
-                type="baselines",
-                imagename=str(png_path),
-                text_direction="horizontal-rl",
-                lines=[BaselineLine(
-                    id="line_0001",
-                    baseline=[[0, h // 2], [w, h // 2]],
-                    boundary=[[0, 0], [w, 0], [w, h], [0, h]],
-                    tags={"type": "default"},
-                )],
-                script_detection=False,
-                regions={},
-                line_orders=[],
+            out_tmp = tempfile.NamedTemporaryFile(suffix=".txt", delete=False, prefix="kraken_test_")
+            out_tmp.close()
+            subprocess.run(
+                [kraken_bin, "-d", DEVICE, "-i", str(png_path), out_tmp.name, "ocr", "-s", "-m", str(model_path), "--reorder"],
+                capture_output=True, text=True, timeout=30,
             )
-            for record in _kr_rpred.rpred(rec_model, im, seg, bidi_reordering=True):
-                prediction = record.prediction
-                break
+            prediction = Path(out_tmp.name).read_text("utf-8", errors="replace").strip()
         except Exception as e:
             prediction = f"[error: {e}]"
+        finally:
+            Path(out_tmp.name).unlink(missing_ok=True)
         cer = _char_error_rate(ground_truth, prediction)
         total_chars += len(ground_truth)
         total_errors += int(round(cer * len(ground_truth)))
