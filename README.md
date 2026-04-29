@@ -1,6 +1,6 @@
 # Manuscript OCR
 
-A local desktop application for OCR (Optical Character Recognition) of Hebrew and Arabic manuscripts, built on the [Kraken](https://kraken.re) engine. Upload manuscript images, run automatic text recognition, correct the output, and train improved models — all from your browser.
+A local desktop application for OCR (Optical Character Recognition) of historical manuscripts, built on the [Kraken](https://kraken.re) engine. Supports any script or language that Kraken can be trained on — Hebrew, Arabic, Syriac, Greek, Latin, and more. Upload manuscript images, run automatic text recognition, correct the output, and train improved models — all from your browser.
 
 ![Python](https://img.shields.io/badge/python-3.12-blue)
 ![Kraken](https://img.shields.io/badge/kraken-6.0-green)
@@ -9,7 +9,7 @@ A local desktop application for OCR (Optical Character Recognition) of Hebrew an
 
 ## Features
 
-- **Automatic text recognition** — segment and OCR manuscript pages using Kraken models with MPS (Apple GPU) acceleration
+- **Automatic text recognition** — segment and OCR manuscript pages in any script using Kraken models with MPS (Apple GPU) acceleration
 - **Interactive viewer** — side-by-side original and processed images with editable OCR text, polygon overlays, and autosave
 - **Layout modes** — Split (images top, text bottom) or Reading (images left, text right)
 - **Per-line annotation** — notes, language, book, chapter, and verse metadata per line
@@ -29,6 +29,13 @@ A local desktop application for OCR (Optical Character Recognition) of Hebrew an
 1. Download `ManuscriptOCR.dmg` from [Releases](https://github.com/Armand4399/OCRapp/releases)
 2. Open the DMG and drag **Manuscript OCR** to your Applications folder
 3. Double-click to launch — your browser opens automatically
+
+> **macOS security note:** Since the app is not signed with an Apple Developer ID, macOS may show "cannot be opened because the developer cannot be verified." To bypass this:
+> 1. **Right-click** (or Control-click) the app in Applications
+> 2. Click **Open** from the context menu
+> 3. Click **Open** again in the dialog
+>
+> You only need to do this once — after that it opens normally.
 
 ### Option 2: Run from source
 
@@ -57,12 +64,12 @@ Open [http://localhost:8000](http://localhost:8000) in your browser.
 
 ## Models
 
-The app ships with bundled models for Hebrew manuscript recognition:
+The app ships with bundled models to get started:
 
 - **BiblIA** — Hebrew manuscript recognition (grayscale)
-- **blla** — baseline segmentation
+- **blla** — baseline segmentation (language-independent)
 
-Additional models can be downloaded from [Zenodo](https://zenodo.org) or trained within the app. Place `.mlmodel` files in:
+These are starting points — you can train models for any script within the app, or download pre-trained models from [Zenodo](https://zenodo.org) and the [Kraken model repository](https://kraken.re/main/models.html). Place `.mlmodel` files in:
 - `models/` (app directory) — bundled with the app
 - `~/Library/Application Support/ManuscriptOCR/models/` — user-added models
 
